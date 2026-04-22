@@ -1,5 +1,6 @@
 import * as core from "@actions/core"
 import { validateInAppUpdatePriority, validateReleaseFiles, validateStatus, validateTracks, validateUserFraction } from "../src/input-validation"
+import { TrackConfiguration } from "../src/edits"
 
 test("invalid in-app update priority fails validation", async () => {
     const testValues = [-1, 6, -1000, 1000]
@@ -86,31 +87,95 @@ describe("validateTracks", () => {
     })
 
     test("deprecated 'track' is respected and emits a deprecation warning", async () => {
-        await expect(validateTracks("internal", [])).resolves.toEqual(["internal"])
+        await expect(validateTracks("internal", [], [], "completed", undefined)).resolves.toEqual([new TrackConfiguration("internal", "completed", undefined)])
         expect(warningSpy).toHaveBeenCalledWith(
             "WARNING!! 'track' is deprecated and will be removed in a future release. Please migrate to 'tracks'"
         )
     })
 
-    test("'tracks' alone is returned verbatim without a deprecation warning", async () => {
-        await expect(validateTracks(undefined, ["internal", "beta"])).resolves.toEqual(["internal", "beta"])
+    test("'tracks' alone is mapped to track configurations without a deprecation warning", async () => {
+        await expect(validateTracks(undefined, ["internal", "beta"], [], "completed", undefined)).resolves.toEqual([new TrackConfiguration("internal", "completed", undefined), new TrackConfiguration("beta", "completed", undefined)])
         expect(warningSpy).not.toHaveBeenCalled()
     })
 
     test("setting both 'track' and 'tracks' rejects with a clear error", async () => {
-        await expect(validateTracks("internal", ["production"])).rejects.toThrowError(
+        await expect(validateTracks("internal", ["production"], [], "completed", undefined)).rejects.toThrowError(
             "Cannot set both 'track' and 'tracks'. 'track' is deprecated — please migrate fully to 'tracks'."
         )
     })
 
     test("omitting both defaults to 'production' without a deprecation warning", async () => {
-        await expect(validateTracks(undefined, [])).resolves.toEqual(["production"])
+        await expect(validateTracks(undefined, [], [], "completed", undefined)).resolves.toEqual([new TrackConfiguration("production", "completed", undefined)])
         expect(warningSpy).not.toHaveBeenCalled()
     })
 
     test("empty-string 'track' is treated as unset", async () => {
-        await expect(validateTracks("", ["beta"])).resolves.toEqual(["beta"])
+        await expect(validateTracks("", ["beta"], [], "completed", undefined)).resolves.toEqual([new TrackConfiguration("beta", "completed", undefined)])
         expect(warningSpy).not.toHaveBeenCalled()
+    })
+
+    test("valid configurations pass validation", async () => {
+        await validateTracks(undefined, [], [
+            { track: "beta", status: "completed" },
+            { track: "internal", status: "inProgress", userFraction: "0.5" }
+        ], undefined, undefined)
+    })
+
+    test("entry missing track fails validation", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "", status: "completed" }
+        ], undefined, undefined)).rejects.toThrowError(
+            "Each entry in 'trackConfigurations' must have a 'track' field"
+        )
+    })
+
+    test("invalid status in entry fails validation", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "beta", status: "invalid" }
+        ], undefined, undefined)).rejects.toThrowError()
+    })
+
+    test("inProgress status without userFraction fails validation", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "beta", status: "inProgress" }
+        ], undefined, undefined)).rejects.toThrowError()
+    })
+
+    test("halted status without userFraction fails validation", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "beta", status: "halted" }
+        ], undefined, undefined)).rejects.toThrowError()
+    })
+
+    test("completed status with userFraction fails validation", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "beta", status: "completed", userFraction: "0.5" }
+        ], undefined, undefined)).rejects.toThrowError()
+    })
+
+    test("invalid userFraction in entry fails validation", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "beta", status: "inProgress", userFraction: "1.5" }
+        ], undefined, undefined)).rejects.toThrowError()
+    })
+
+    test("error in second entry is caught", async () => {
+        await expect(validateTracks(undefined, [], [
+            { track: "beta", status: "completed" },
+            { track: "production", status: "inProgress" }
+        ], undefined, undefined)).rejects.toThrowError()
+    })
+
+    test("'trackConfigurations' with 'track' rejects with a clear error", async () => {
+        await expect(validateTracks("internal", [], [{ track: "beta", status: "completed" }], "completed", undefined)).rejects.toThrowError(
+            "Cannot set 'trackConfigurations' along with 'track' or 'tracks'"
+        )
+    })
+
+    test("'trackConfigurations' with 'tracks' rejects with a clear error", async () => {
+        await expect(validateTracks(undefined, ["production"], [{ track: "beta", status: "completed" }], "completed", undefined)).rejects.toThrowError(
+            "Cannot set 'trackConfigurations' along with 'track' or 'tracks'"
+        )
     })
 })
 

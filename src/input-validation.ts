@@ -1,5 +1,6 @@
 import fg from "fast-glob";
 import * as core from "@actions/core";
+import { TrackConfiguration, PossibleTrackConfiguration } from "./edits";
 
 export async function validateUserFraction(userFraction: number | undefined): Promise<void> {
     if (userFraction != undefined) {
@@ -62,16 +63,66 @@ export async function validateReleaseFiles(releaseFile: string | undefined, rele
     return files
 }
 
-export async function validateTracks(track: string | undefined, tracks: string[]): Promise<string[]> {
+export async function validateTracks(track: string | undefined, tracks: string[], trackConfigurations: PossibleTrackConfiguration[], status: string | undefined, userFraction: string | undefined): Promise<TrackConfiguration[]> {
     if (track && tracks.length > 0) {
         return Promise.reject(new Error(`Cannot set both 'track' and 'tracks'. 'track' is deprecated — please migrate fully to 'tracks'.`))
     }
+    if (trackConfigurations.length > 0 && (track || tracks.length > 0)) {
+        return Promise.reject(new Error(`Cannot set 'trackConfigurations' along with 'track' or 'tracks'.`))
+    }
+    if (trackConfigurations.length > 0) {
+        if (status) {
+            core.warning(`WARNING!! 'status' is unused when trackConfigurations are specified.`)
+        }
+        if (userFraction) {
+            core.warning(`WARNING!! 'userFraction' is unused when trackConfigurations are specified.`)
+        }
+
+        for (const configuration of trackConfigurations) {
+            if (!configuration.track || configuration.track === '') {
+                return Promise.reject(new Error(`Each entry in 'trackConfigurations' must have a 'track' field`))
+            }
+
+            let userFractionFloat: number | undefined
+            if (configuration.userFraction) {
+                userFractionFloat = parseFloat(configuration.userFraction)
+            } else {
+                userFractionFloat = undefined
+            }
+
+            await validateUserFraction(userFractionFloat)
+            await validateStatus(configuration.status, userFractionFloat != undefined && !isNaN(userFractionFloat))
+        }
+
+        return trackConfigurations.map(configuration => {
+            let userFractionFloat: number | undefined
+            if (configuration.userFraction) {
+                userFractionFloat = parseFloat(configuration.userFraction)
+            } else {
+                userFractionFloat = undefined
+            }
+            return new TrackConfiguration(configuration.track, configuration.status, userFractionFloat)
+        })
+    }
+
+    // Validate user fraction
+    let userFractionFloat: number | undefined
+    if (userFraction) {
+        userFractionFloat = parseFloat(userFraction)
+    } else {
+        userFractionFloat = undefined
+    }
+    await validateUserFraction(userFractionFloat)
+
+    // Validate release status
+    await validateStatus(status, userFractionFloat != undefined && !isNaN(userFractionFloat))
+
     if (track) {
         core.warning(`WARNING!! 'track' is deprecated and will be removed in a future release. Please migrate to 'tracks'`)
-        return [track]
+        return [new TrackConfiguration(track, status!, userFractionFloat)]
     }
     if (tracks.length > 0) {
-        return tracks
+        return tracks.map(track => new TrackConfiguration(track, status!, userFractionFloat))
     }
-    return ['production']
+    return [new TrackConfiguration('production', status!, userFractionFloat)]
 }

@@ -21,31 +21,51 @@ const androidPublisher: AndroidPublisher = google.androidpublisher('v3');
 export interface EditOptions {
     auth: GoogleAuth;
     applicationId: string;
-    tracks: string[];
+    trackConfigurations: TrackConfiguration[];
     inAppUpdatePriority: number;
-    userFraction?: number;
     whatsNewDir?: string;
     mappingFile?: string;
     debugSymbols?: string;
     name?: string;
-    status: string;
     changesNotSentForReview?: boolean;
     existingEditId?: string;
     versionCodesToRetain?: number[]
 }
 
+export class PossibleTrackConfiguration {
+    track: string
+    status: string
+    userFraction?: string
+
+    constructor(track: string, status: string, userFraction?: string) {
+        this.track = track
+        this.status = status
+        this.userFraction = userFraction
+    }
+}
+
+export class TrackConfiguration {
+    track: string
+    status: string
+    userFraction?: number
+
+    constructor(track: string, status: string, userFraction?: number) {
+        this.track = track
+        this.status = status
+        this.userFraction = userFraction
+    }
+}
+
 export async function runUpload(
     packageName: string,
-    tracks: string[],
+    trackConfigurations: TrackConfiguration[],
     inAppUpdatePriority: number | undefined,
-    userFraction: number | undefined,
     whatsNewDir: string | undefined,
     mappingFile: string | undefined,
     debugSymbols: string | undefined,
     name: string | undefined,
     changesNotSentForReview: boolean,
     existingEditId: string | undefined,
-    status: string,
     validatedReleaseFiles: string[],
     versionCodesToRetain: number[] | undefined
 ) {
@@ -56,16 +76,14 @@ export async function runUpload(
     const result = await uploadToPlayStore({
         auth: auth,
         applicationId: packageName,
-        tracks: tracks,
+        trackConfigurations: trackConfigurations,
         inAppUpdatePriority: inAppUpdatePriority || 0,
-        userFraction: userFraction,
         whatsNewDir: whatsNewDir,
         mappingFile: mappingFile,
         debugSymbols: debugSymbols,
         name: name,
         changesNotSentForReview: changesNotSentForReview,
         existingEditId: existingEditId,
-        status: status,
         versionCodesToRetain: versionCodesToRetain
     }, validatedReleaseFiles);
 
@@ -77,7 +95,7 @@ export async function runUpload(
 async function uploadToPlayStore(options: EditOptions, releaseFiles: string[]): Promise<string | void> {
     const internalSharingDownloadUrls: string[] = []
     // Check the 'track' for 'internalsharing', if so switch to a non-track api
-    if (options.tracks[0] === 'internalsharing') {
+    if (options.trackConfigurations[0].track === 'internalsharing') {
         core.debug("Track is Internal app sharing, switch to special upload api")
         for (const releaseFile of releaseFiles) {
             core.debug(`Uploading ${releaseFile}`);
@@ -156,9 +174,9 @@ async function uploadInternalSharingRelease(options: EditOptions, releaseFile: s
 }
 
 async function validateSelectedTracks(appEditId: string, options: EditOptions): Promise<void> {
-    core.info(`Validating tracks: '${options.tracks.join(", ")}'`)
+    core.info(`Validating tracks: '${options.trackConfigurations.map(x => x.track).join(", ")}'`)
 
-    if (options.tracks.includes('internalsharing') && options.tracks.length > 1) {
+    if (options.trackConfigurations.some(item => item.track === 'internalsharing') && options.trackConfigurations.length > 1) {
         throw Error(`Can't upload to other tracks when internalsharing is requested.`)
     }
 
@@ -180,40 +198,34 @@ async function validateSelectedTracks(appEditId: string, options: EditOptions): 
     }
 
     // Check whether the tracks are valid
-    const invalidTracks = options.tracks.filter(track => !playTracks.includes(track));
+    const invalidTracks = options.trackConfigurations.filter(configuration => !playTracks.includes(configuration.track));
     if (invalidTracks.length > 0) {
-        throw Error(`Track(s) "${invalidTracks.join(", ")}" could not be found. Available tracks are: ${playTracks.toString()}`);
+        throw Error(`Track(s) "${invalidTracks.map(x => x.track).join(", ")}" could not be found. Available tracks are: ${playTracks.toString()}`);
     }
 }
 
 async function addReleasesToTracks(appEditId: string, options: EditOptions, versionCodes: number[]): Promise<Track[]> {
-    const status = options.status
-
     core.debug(`Creating release for:`);
     core.debug(`edit=${appEditId}`)
-    core.debug(`tracks=${options.tracks.join(',')}`);
-    if (options.userFraction) {
-        core.debug(`userFraction=${options.userFraction}`)
-    }
-    core.debug(`status=${status}`)
+    core.debug(`tracks=${options.trackConfigurations.map(x => x.track).join(',')}`);
     core.debug(`versionCodes=${versionCodes.toString()}`)
 
     const tracks: Track[] = [];
 
-    for (const track of options.tracks) {
+    for (const configuration of options.trackConfigurations) {
         const response = await androidPublisher.edits.tracks
             .update({
                 auth: options.auth,
                 editId: appEditId,
                 packageName: options.applicationId,
-                track: track,
+                track: configuration.track,
                 requestBody: {
-                    track: track,
+                    track: configuration.track,
                     releases: [
                         {
                             name: options.name,
-                            userFraction: options.userFraction,
-                            status: status,
+                            userFraction: configuration.userFraction,
+                            status: configuration.status,
                             inAppUpdatePriority: options.inAppUpdatePriority,
                             releaseNotes: await readLocalizedReleaseNotes(options.whatsNewDir),
                             versionCodes: versionCodes.filter(x => x != 0).map(x => x.toString())

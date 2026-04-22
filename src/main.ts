@@ -1,12 +1,10 @@
 import * as core from '@actions/core'
 import * as fs from "fs"
-import { runUpload } from "./edits"
+import { TrackConfiguration, PossibleTrackConfiguration, runUpload } from "./edits"
 import {
     validateInAppUpdatePriority,
     validateReleaseFiles,
-    validateStatus,
     validateTracks,
-    validateUserFraction
 } from "./input-validation"
 import { unlink, writeFile } from 'fs/promises'
 import pTimeout from 'p-timeout'
@@ -25,6 +23,7 @@ export async function run() {
         const tracks = core.getInput('tracks', { required: false })
             ?.split(',')
             ?.filter(x => x !== '') ?? [];
+        const trackConfigurationsRaw = core.getInput('trackConfigurations', { required: false })
         const inAppUpdatePriority = core.getInput('inAppUpdatePriority', { required: false });
         const userFraction = core.getInput('userFraction', { required: false })
         const status = core.getInput('status', { required: false });
@@ -41,17 +40,15 @@ export async function run() {
 
         await validateServiceAccountJson(serviceAccountJsonRaw, serviceAccountJson)
 
-        // Validate user fraction
-        let userFractionFloat: number | undefined
-        if (userFraction) {
-            userFractionFloat = parseFloat(userFraction)
-        } else {
-            userFractionFloat = undefined
+        let trackConfigurations: PossibleTrackConfiguration[] | undefined
+        if (trackConfigurationsRaw) {
+            try {
+                trackConfigurations = JSON.parse(trackConfigurationsRaw) as PossibleTrackConfiguration[]
+            } catch(e) {
+                console.log(e)
+                throw new Error(`'trackConfigurations' must be valid JSON received: ${trackConfigurationsRaw}`)
+            }
         }
-        await validateUserFraction(userFractionFloat)
-
-        // Validate release status
-        await validateStatus(status, userFractionFloat != undefined && !isNaN(userFractionFloat))
 
         // Validate the inAppUpdatePriority to be a valid number in within [0, 5]
         let inAppUpdatePriorityInt: number | undefined
@@ -64,7 +61,7 @@ export async function run() {
 
         const validatedReleaseFiles: string[] = await validateReleaseFiles(releaseFile, releaseFiles)
 
-        const validatedTracks: string[] = await validateTracks(track, tracks)
+        const validatedTracks: TrackConfiguration[] = await validateTracks(track, tracks, trackConfigurations ?? [], status, userFraction)
 
         if (whatsNewDir != undefined && whatsNewDir.length > 0 && !fs.existsSync(whatsNewDir)) {
             core.warning(`Unable to find 'whatsnew' directory @ ${whatsNewDir}`);
@@ -83,14 +80,12 @@ export async function run() {
                 packageName,
                 validatedTracks,
                 inAppUpdatePriorityInt,
-                userFractionFloat,
                 whatsNewDir,
                 mappingFile,
                 debugSymbols,
                 releaseName,
                 changesNotSentForReview,
                 existingEditId,
-                status,
                 validatedReleaseFiles,
                 versionCodesToRetain
             ),
@@ -131,7 +126,7 @@ async function validateServiceAccountJson(serviceAccountJsonRaw: string | undefi
         core.exportVariable("GOOGLE_APPLICATION_CREDENTIALS", serviceAccountJson)
     } else {
         // If the user provided neither, fail and exit
-        return Promise.reject("You must provide one of 'serviceAccountJsonPlainText' or 'serviceAccountJson' to use this action")
+        return Promise.reject(new Error("You must provide one of 'serviceAccountJsonPlainText' or 'serviceAccountJson' to use this action"))
     }
 }
 

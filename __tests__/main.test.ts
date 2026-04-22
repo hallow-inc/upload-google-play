@@ -15,6 +15,7 @@ test("correct bare minimum inputs", async () => {
             packageName: "com.package.name",
             releaseFiles: "./__tests__/releasefiles/*.aab",
             track: "production",
+            status: "completed",
         })
     await expectRunInitiatesUpload(minimumOptions)
 })
